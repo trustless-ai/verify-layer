@@ -79,6 +79,14 @@ async function verifyAccount(address, blockTag = 'finalized') {
     address, block: BigInt(block.number), stateRoot: block.stateRoot,
     boundToHeader, claimMatchesProof,
     provenBalanceWei: provenBalance, provenBalanceEth: Number(provenBalance) / 1e18,
+    // TRUST-TIER DISCLOSURE — the marker travels with the value (never collapse these into one ✓).
+    // Verification has a KIND: RE-DERIVED (you checked the rule yourself, no circuit) vs PROOF-ATTESTED
+    // (you verified a ZK proof, trusting the circuit is faithful) vs RPC-TRUSTED (took the RPC's word).
+    trust: {
+      state: (boundToHeader && claimMatchesProof) ? 'RE-DERIVED' : 'UNVERIFIED', // MPT proof, no circuit trusted
+      header: 'RPC-TRUSTED', // v0 — upgrade to LIGHT-CLIENT (re-derive) or ZK (attest) to close this
+      overall: (boundToHeader && claimMatchesProof) ? 'state-proven / header-trusted (v0)' : 'rejected',
+    },
     proven, raw: { block, res, accountProof, stateRoot },
   };
 }
@@ -151,7 +159,11 @@ async function main() {
   console.log(`  chain of custody: header→account.storageRoot→slot  = ${s.boundToHeader && s.boundToAccount ? 'intact' : 'BROKEN'}`);
   console.log(`  ==> ${s.verified ? '✅ VERIFIED (storage proven, not trusted)' : '❌ REJECTED'}\n`);
 
-  console.log(`trust tier: PROOF-VERIFIED state @ stateRoot#${r.block}`);
-  console.log(`  (header from RPC in this v0 — swap header source for a consensus light client = full trustless)`);
+  // ── TRUST-TIER DISCLOSURE — what each answer is actually worth (marker travels with the value) ──
+  console.log('trust tier (what each answer is actually worth — never collapse to one ✓):');
+  console.log(`  state   : ${r.trust.state}   — MPT proof verified against stateRoot; no circuit trusted`);
+  console.log(`  header  : ${r.trust.header}  — stateRoot taken from the RPC in v0 (the one open seam)`);
+  console.log(`  overall : ${r.trust.overall}`);
+  console.log(`            upgrade the header via L1 — a light client RE-DERIVES, a ZK light client ATTESTS — for fully trustless.`);
 }
 main().catch((e) => { console.error('ERROR', e); process.exit(1); });

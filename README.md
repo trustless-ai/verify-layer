@@ -39,8 +39,9 @@ node verify.mjs
 1. ✅ **Storage-slot proofs** — done (verify a contract var / token balance, chained to the account root).
 2. **Consensus light-client header source** — get the `stateRoot` from a sync-committee light client
    (helios-style) so the header isn't trusted either → *full* trustlessness.
-3. **Trust-tier disclosure** — surface `PROOF-VERIFIED` vs `RPC-TRUSTED` in the wallet UI (the marker travels
-   with the value — Fede's `freshness_beacon` shape).
+3. ✅ **Trust-tier disclosure** — done: structured `trust` object labels the *kind* of each answer —
+   state `RE-DERIVED` (MPT proof, no circuit trusted) vs header `RPC-TRUSTED` (v0). The marker travels with
+   the value; verification kind (re-derive vs proof-attest vs rpc-trust) is never collapsed to one ✓.
 4. **Compose our live primitives** — ERC-8373 PQ keys (`PqBindingAnchor` + `/pq/wallet`) + agent actions
    (`AgentMarketEscrow`, `MCPEntitlementRegistry`). Two of three wallet pillars already live.
 
