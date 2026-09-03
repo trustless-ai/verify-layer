@@ -37,7 +37,13 @@ node verify.mjs
 
 ## Next steps (toward the wallet MVP)
 1. ✅ **Storage-slot proofs** — done (verify a contract var / token balance, chained to the account root).
-2. **Consensus light-client header source** — get the `stateRoot` from a sync-committee light client
+   *(The L1/L2 seam is now concrete in code: header sources are pluggable — `RpcHeaderSource` today,
+   `LightClientHeaderSource` is the documented drop-in. Swap the source and the header trust label changes;
+   the L2 state proof is untouched.)*
+2. **Consensus light-client header source (L1)** — the pluggable slot exists (`LightClientHeaderSource`);
+   wiring `@lodestar/light-client` (bootstrap → sync-committee verify → execution stateRoot) drops straight
+   in and flips the header from `RPC-TRUSTED` to `RE-DERIVED`. Needs a beacon node exposing light-client
+   REST endpoints. Get the `stateRoot` from a sync-committee light client
    (helios-style) so the header isn't trusted either → *full* trustlessness.
 3. ✅ **Trust-tier disclosure** — done: structured `trust` object labels the *kind* of each answer —
    state `RE-DERIVED` (MPT proof, no circuit trusted) vs header `RPC-TRUSTED` (v0). The marker travels with

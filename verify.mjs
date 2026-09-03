@@ -62,10 +62,34 @@ async function checkAccountProof(expectedStateRoot, address, accountProofBytes) 
   return { boundToHeader, proven };
 }
 
-async function verifyAccount(address, blockTag = 'finalized') {
-  const block = await rpc('eth_getBlockByNumber', [blockTag, false]);
-  const res = await rpc('eth_getProof', [address, [], block.number]);
-  const stateRoot = hexToBytes(block.stateRoot);
+// ── L1 header sources (pluggable) ────────────────────────────────────────────
+// The state proof (L2) verifies against whatever stateRoot a header source returns; what changes between
+// sources is HOW MUCH you trust that stateRoot. This is the L1/L2 seam made concrete: swap the source, the
+// state proof is untouched. The proof itself can come from any RPC — we verify it against the trusted root.
+class RpcHeaderSource {
+  async getStateRoot(blockTag = 'finalized') {
+    const block = await rpc('eth_getBlockByNumber', [blockTag, false]);
+    return {
+      stateRoot: hexToBytes(block.stateRoot), blockNumber: block.number,
+      trust: { tier: 'RPC-TRUSTED', note: 'stateRoot taken from the RPC on faith — the one open seam' },
+    };
+  }
+}
+// The drop-in that closes the seam: a consensus light client. Bootstrap from a weak-subjectivity checkpoint,
+// verify sync-committee signatures, return the execution stateRoot from a light-client-verified header
+// (post-Capella LightClientHeader.execution.stateRoot). Trust then reduces to the checkpoint root — far
+// weaker than trusting an RPC, and RE-DERIVED (you check the signatures), not circuit-attested.
+class LightClientHeaderSource {
+  async getStateRoot() {
+    throw new Error('LightClientHeaderSource not wired yet (L1) — @lodestar/light-client: bootstrap from a ' +
+      'checkpoint root, verify the sync committee, take the verified execution stateRoot. Needs a beacon ' +
+      'node exposing /eth/v1/beacon/light_client/*. This class is the exact drop-in point.');
+  }
+}
+
+async function verifyAccount(address, blockTag = 'finalized', headerSource = new RpcHeaderSource()) {
+  const { stateRoot, blockNumber, trust: headerTrust } = await headerSource.getStateRoot(blockTag);
+  const res = await rpc('eth_getProof', [address, [], blockNumber]); // proof may come from ANY RPC — verified below
   const accountProof = res.accountProof.map(hexToBytes);
   const { boundToHeader, proven } = await checkAccountProof(stateRoot, address, accountProof);
 
@@ -74,20 +98,22 @@ async function verifyAccount(address, blockTag = 'finalized') {
   const provenBalance = proven ? proven.balance : 0n;
   const claimMatchesProof = claimedBalance === provenBalance;
 
+  const ok = boundToHeader && claimMatchesProof;
   return {
-    verified: boundToHeader && claimMatchesProof,
-    address, block: BigInt(block.number), stateRoot: block.stateRoot,
+    verified: ok,
+    address, block: BigInt(blockNumber), stateRoot: bytesToHex(stateRoot),
     boundToHeader, claimMatchesProof,
     provenBalanceWei: provenBalance, provenBalanceEth: Number(provenBalance) / 1e18,
     // TRUST-TIER DISCLOSURE — the marker travels with the value (never collapse these into one ✓).
     // Verification has a KIND: RE-DERIVED (you checked the rule yourself, no circuit) vs PROOF-ATTESTED
     // (you verified a ZK proof, trusting the circuit is faithful) vs RPC-TRUSTED (took the RPC's word).
+    // `header` now reflects the chosen L1 source — swap the header source and this label changes.
     trust: {
-      state: (boundToHeader && claimMatchesProof) ? 'RE-DERIVED' : 'UNVERIFIED', // MPT proof, no circuit trusted
-      header: 'RPC-TRUSTED', // v0 — upgrade to LIGHT-CLIENT (re-derive) or ZK (attest) to close this
-      overall: (boundToHeader && claimMatchesProof) ? 'state-proven / header-trusted (v0)' : 'rejected',
+      state: ok ? 'RE-DERIVED' : 'UNVERIFIED', // MPT proof, no circuit trusted
+      header: headerTrust.tier,                // from the L1 header source (RPC-TRUSTED today)
+      overall: ok ? `state-proven / header ${headerTrust.tier}` : 'rejected',
     },
-    proven, raw: { block, res, accountProof, stateRoot },
+    proven, raw: { block: { number: blockNumber, stateRoot: bytesToHex(stateRoot) }, res, accountProof, stateRoot },
   };
 }
 
@@ -165,5 +191,12 @@ async function main() {
   console.log(`  header  : ${r.trust.header}  — stateRoot taken from the RPC in v0 (the one open seam)`);
   console.log(`  overall : ${r.trust.overall}`);
   console.log(`            upgrade the header via L1 — a light client RE-DERIVES, a ZK light client ATTESTS — for fully trustless.`);
+
+  // ── the L1 seam is pluggable: swapping the header source IS the whole L1 upgrade (L2 untouched) ──
+  try { await new LightClientHeaderSource().getStateRoot(); }
+  catch (e) {
+    console.log(`\nL1 header source is pluggable:  now = RpcHeaderSource (RPC-TRUSTED)`);
+    console.log(`  drop-in LightClientHeaderSource → header flips to RE-DERIVED, L2 unchanged. Status: ${e.message.split('—')[0].trim()}`);
+  }
 }
 main().catch((e) => { console.error('ERROR', e); process.exit(1); });
